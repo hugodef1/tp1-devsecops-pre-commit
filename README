@@ -30,4 +30,123 @@ La version installée ou résolue. 1.2.4
 L'identifiant de vulnérabilité, lorsqu'il est fourni.
 La version corrigée disponible, si elle existe.
 L'impact potentiel sur l'application.
-L'action envisagée.Maintenir l'audit automatique dans pre-commit et en CI pour détecter toute future faille publiée, et verrouiller la version saine dans requirements.txt
+L'action envisagée. Maintenir l'audit automatique dans pre-commit et en CI pour détecter toute future faille publiée, et verrouiller la version saine dans requirements.txt
+
+Partie 10 — Adapter les contrôles à NOVA SERVICES
+Réponses aux questions d'adaptation
+1. Quels contrôles doivent être communs à tous les dépôts ? Les contrôles d'hygiène générale du code et de prévention des fuites d'informations sensibles s'appliquent à n'importe quel projet, quel que soit le langage utilisé (API, outil d'administration ou scripts d'automatisation) :
+La détection des secrets (detect-secrets) pour bloquer l'ajout accidentel de mots de passe ou clés API.
+Les vérifications de formatage et d'intégrité des fichiers (trailing-whitespace, end-of-file-fixer, check-added-large-files, check-yaml).
+2. Quels contrôles doivent être spécifiques à Python ? Les outils d'analyse syntaxique, de sécurité applicative et de gestion des bibliothèques propres à l'écosystème Python :
+L'analyse statique de sécurité (SAST) avec Bandit.
+L'exécution des tests unitaires avec pytest.
+L'audit des vulnérabilités des dépendances avec pip-audit.
+(Optionnel) Un formateur ou linter Python comme Ruff ou Black.
+3. Quels contrôles doivent être bloquants avant le commit ? Les contrôles rapides et critiques qui empêchent une erreur évidente d'entrer dans l'historique Git local :
+detect-secrets (pour éviter qu'un secret ne soit enregistré dans l'historique local).
+bandit (détection rapide des failles critiques comme eval()).
+Les hooks de formatage (check-yaml, check-added-large-files, etc.).
+Les tests unitaires rapides (pytest sur les fonctions critiques).
+4. Quels contrôles peuvent être exécutés uniquement en CI ? Les contrôles plus lents, dépendants du réseau ou trop lourds pour le poste de travail du développeur :
+L'audit complet des dépendances (pip-audit), qui nécessite un accès réseau aux bases de vulnérabilités et peut ralentir les commits locaux.
+Les suites de tests longues (tests d'intégration, tests de bout en bout, tests de charge).
+Les analyses approfondies (scans de conteneurs Docker, analyses SAST complètes).
+5. Comment éviter qu'une exception à detect-secrets masque un véritable secret ?
+Exiger une revue humaine systématique (via Pull Request) de toute modification du fichier .secrets.baseline ou de tout commentaire # pragma: allowlist secret.
+Justifier chaque exception (ex. : identifiant de test non sensible) et interdire d'ajouter un vrai secret au baseline.
+Imposer que tout vrai secret détecté soit immédiatement révoqué, renouvelé et retiré du code.
+6. Qui est responsable de la mise à jour des versions des hooks ? Le référent technique (Tech Lead) ou le référent DevSecOps / Sécurité de l'équipe, en coordination avec les développeurs, via une mise à jour périodique et contrôlée (pre-commit autoupdate) testée avant déploiement sur la branche principale.
+7. Comment prouver qu'un développeur a corrigé une vulnérabilité ?
+Par l'historique Git : un commit dédié référençant le correctif (ex. : mise à jour de version dans requirements.txt ou refactorisation du code).
+Par le rapport d'exécution réussi de la pipeline CI (pre-commit run --all-files, pytest, pip-audit) sur la Pull Request associée.
+Par la validation de la revue de code par un pair avant la fusion sur main.
+8. Comment traiter une dépendance vulnérable pour laquelle aucun correctif n'est disponible ?
+Évaluer l'exploitabilité réelle : vérifier si la fonction vulnérable de la bibliothèque est réellement appelée par l'application.
+Mettre en place des mesures compensatoires : filtrer ou valider strictement les entrées utilisateur en amont, restreindre l'accès réseau ou isoler le service.
+Remplacer la bibliothèque : migrer vers une alternative maintenue si le risque est trop élevé.
+Documenter l'acceptation temporaire du risque : enregistrer une exception formalisée, approuvée par le responsable sécurité, avec une date de réexamen régulière.
+
+Livrable complémentaire — Politique de sécurisation du code (NOVA SERVICES)
+Politique interne de sécurisation du code — NOVA SERVICES
+1. Contrôles obligatoires Tout dépôt applicatif doit embarquer à sa racine un fichier .pre-commit-config.yaml versionné intégrant : le contrôle de formatage et de taille des fichiers, la détection de secrets (detect-secrets), l'analyse statique de sécurité (bandit pour Python), l'exécution des tests unitaires (pytest) et l'audit des dépendances (pip-audit).
+2. Répartition des contrôles (Local vs CI)
+En local (avant chaque commit) : Formatage YAML/fins de ligne, taille des fichiers, detect-secrets, bandit et tests unitaires rapides.
+En intégration continue (CI sur chaque Pull Request) : Réexécution complète de pre-commit run --all-files, suite complète de tests (pytest) et audit des dépendances (pip-audit).
+3. Conditions de blocage Tout échec sur la détection de secret, sur une vulnérabilité de sévérité moyenne ou haute détectée par Bandit (-ll), ou sur un test unitaire bloque immédiatement le commit local ainsi que la fusion de la Pull Request vers la branche main.
+4. Traitement des faux positifs Lorsqu'un outil signale une alerte non pertinente (ex. : chaîne aléatoire de test dans detect-secrets), le développeur doit analyser l'alerte avant de l'ajouter au fichier .secrets.baseline ou d'utiliser une directive d'exclusion. Toute modification du baseline doit être justifiée dans la description de la Pull Request.
+5. Responsable de la validation des exceptions Aucune exception de sécurité (contournement d'une règle SAST ou acceptation d'une dépendance vulnérable sans correctif) ne peut être validée par son auteur. Toute dérogation doit être examinée et approuvée par le Responsable Sécurité (RSSI / Référent DevSecOps) et fait l'objet d'un réexamen trimestriel.
+6. Procédure de mise à jour des outils Les versions des hooks et des outils d'analyse sont épinglées dans .pre-commit-config.yaml et requirements-dev.txt. Le référent technique effectue une mise à jour mensuelle via pre-commit autoupdate, valide la non-régression sur l'ensemble du dépôt et soumet la mise à jour via une Pull Request dédiée.
+
+Partie 12 — Indicateurs de suivi de la sécurité
+Voici le tableau complet des indicateurs permettant de piloter l'efficacité du dispositif au sein de NOVA SERVICES :
+Indicateur TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf+ 1
+Ce qu'il mesure TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf+ 1
+Source de données TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf
+Propriétaire TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf
+Fréquence TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf
+Seuil d'alerte & Action déclenchée TP1 — Sécuriser un dépôt Python avec les hooks pre-commit.pdf
+Taux de dépôts configurés
+Part des dépôts actifs disposant d'un fichier .pre-commit-config.yaml à jour.
+Plateforme Git (GitLab / GitHub API)
+Référent DevSecOps
+Mensuelle
+Seuil : < 100 % des dépôts actifs.
+
+Action : Déploiement du modèle standard sur les dépôts manquants.
+Taux de contrôles CI réussis
+Part des exécutions de pipelines CI terminées sans échec de sécurité ou de test.
+Logs de la chaîne CI/CD
+Tech Lead
+Hebdomadaire
+Seuil : < 85 % de réussite.
+
+Action : Rappel sur l'installation locale (pre-commit install) ou sensibilisation de l'équipe.
+Nombre de secrets détectés
+Volume d'alertes remontées par detect-secrets à qualifier (vrais secrets vs faux positifs).
+Rapports CI detect-secrets & commits sur .secrets.baseline
+Responsable Sécurité
+Hebdomadaire
+Seuil : ≥ 1 vrai secret détecté.
+
+Action : Révocation immédiate du secret, purge de l'historique Git et sensibilisation.
+Nombre de vulnérabilités de dépendances ouvertes
+Volume de CVE identifiées par pip-audit restant à corriger.
+Rapports CI pip-audit
+Tech Lead / Sécurité
+Hebdomadaire
+Seuil : > 0 faille Critique ou Haute.
+
+Action : Création d'un ticket prioritaire de mise à jour de dépendance.
+Délai médian de correction
+Temps écoulé entre la détection d'une vulnérabilité et la validation de son correctif.
+Gestionnaire de tickets & historique Git
+Responsable Sécurité
+Mensuelle
+Seuil : > 7 jours (Critique) ou > 30 jours (Moyenne).
+
+Action : Escalade auprès des chefs de projet pour planifier la remédiation.
+Nombre d'exceptions actives
+Nombre de dérogations (baseline ou dépendances non corrigées) encore actives.
+Registre des exceptions & .secrets.baseline
+Responsable Sécurité
+Trimestrielle
+Seuil : Augmentation continue ou exception > 3 mois.
+
+Action : Revue obligatoire pour confirmer le maintien ou exiger la suppression de l'exception.
+
+Partie 13 — Questions de compréhension
+1. Qu'est-ce qu'un hook pre-commit ? C'est un script automatisé déclenché par Git juste avant la création d'un commit local. Il vérifie le code modifié (formatage, sécurité, tests) et bloque le commit si l'un des contrôles échoue.
+2. Quelle différence existe-t-il entre un contrôle local et un contrôle CI ? Le contrôle local s'exécute sur le poste du développeur avant le commit ; il offre un retour immédiat mais peut être désactivé ou contourné (par exemple avec --no-verify ou core.hooksPath=/dev/null). Le contrôle CI s'exécute sur un serveur centralisé lors de l'envoi du code (Push / Pull Request) ; il est obligatoire, non contournable et garantit que tout le code intégré respecte les règles de sécurité.
+3. Pourquoi faut-il versionner .pre-commit-config.yaml ? Versionner ce fichier dans Git permet de partager exactement les mêmes règles et versions d'outils avec toute l'équipe de développement ainsi qu'avec le serveur d'intégration continue (CI), garantissant ainsi la reproductibilité des contrôles.
+4. Pourquoi detect-secrets peut-il produire des faux positifs ? Parce qu'il s'appuie sur des expressions régulières (mots-clés comme password, token) et sur le calcul d'entropie (chaînes de caractères très aléatoires). Il peut donc signaler par erreur un identifiant technique, un hash de test ou une chaîne aléatoire qui n'est pas un véritable secret.
+5. Pourquoi un baseline ne doit-il pas servir à ignorer des secrets réels ? Le fichier .secrets.baseline est versionné et lisible dans le dépôt Git. Y inscrire un vrai secret ne fait que masquer l'alerte tout en laissant le secret exposé dans le code et dans l'historique Git ; un vrai secret doit impérativement être supprimé du code et révoqué.
+6. Quel risque présente l'utilisation de eval() sur une entrée non fiable ? eval() interprète et exécute la chaîne fournie comme du code Python. Si l'entrée provient d'un utilisateur malveillant, celui-ci peut injecter des commandes système arbitraires (exécution de code à distance / RCE), lire des fichiers sensibles ou compromettre le serveur.
+7. Pourquoi un fichier .env doit-il être exclu du dépôt ? Le fichier .env contient les véritables valeurs sensibles (mots de passe, clés API) propres à l'environnement local d'exécution. L'exclure via .gitignore empêche sa publication sur le dépôt distant et évite la fuite des identifiants.
+8. Pourquoi le fait de déplacer un secret dans une variable d'environnement ne suffit-il pas à sécuriser sa gestion ? Bien que cela retire le secret du code source, une variable d'environnement reste lisible en clair par tous les processus enfants, peut fuiter dans les logs d'erreur ou les dumps mémoire, et n'offre ni chiffrement au repos, ni contrôle d'accès fin, ni rotation automatique (contrairement à un coffre-fort de secrets comme HashiCorp Vault ou AWS Secrets Manager).
+9. Quelle différence existe-t-il entre une analyse de code et un audit des dépendances ?
+L'analyse de code (SAST, ex. : Bandit) inspecte le code source écrit par les développeurs de l'entreprise pour détecter des failles de programmation (ex. : eval(), injections SQL).
+L'audit des dépendances (SCA, ex. : pip-audit) vérifie les bibliothèques tierces importées dans le projet afin d'identifier si leurs versions contiennent des vulnérabilités publiques connues (CVE).
+10. Pourquoi faut-il exécuter les tests dans la CI même si un hook local existe ? Un développeur peut oublier d'installer les hooks (pre-commit install), contourner leur exécution locale, ou disposer d'un environnement local différent de la production. La CI garantit que les tests sont systématiquement exécutés dans un environnement propre et isolé avant toute intégration.
+11. Comment empêcher réellement les pushes directs sur main ? Il faut configurer des règles de protection de branche directement côté serveur sur la plateforme Git (GitHub / GitLab) : interdire les pushes directs sur main, imposer le passage par une Pull Request / Merge Request, exiger la réussite des contrôles CI et demander au moins une approbation de revue de code.
+12. Quels indicateurs permettraient de suivre l'efficacité du dispositif ? On peut suivre le taux de dépôts équipés de hooks, le taux de réussite des pipelines CI, le nombre de secrets détectés, le volume de vulnérabilités ouvertes sur les dépendances, le délai médian de correction des failles et le nombre d'exceptions actives.
+
